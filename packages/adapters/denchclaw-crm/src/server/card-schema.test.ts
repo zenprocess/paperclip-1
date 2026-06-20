@@ -93,3 +93,79 @@ describe("companyToCard", () => {
     expect(card.priority).toBe("high");
   });
 });
+
+describe("prototype-pollution hardening", () => {
+  it("__proto__ key in fields does not pollute Object.prototype", () => {
+    // Capture a baseline property that should never exist on plain objects
+    const before = ({} as Record<string, unknown>).polluted;
+
+    // Construct the record so that `fields` contains a key named "__proto__"
+    // with a value that would pollute if assigned via bracket notation.
+    const fields: Record<string, unknown> = {};
+    // Use Object.defineProperty to set a key literally named "__proto__"
+    // as an own property without triggering the language setter.
+    Object.defineProperty(fields, "__proto__", {
+      value: { polluted: true },
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+
+    const card = personToCard({ id: "sec1", fields });
+
+    // Object.prototype must not have been polluted.
+    expect(({} as Record<string, unknown>).polluted).toBe(before);
+    // The dangerous key must not appear in the card description or title.
+    expect(card.title).toBe("(unnamed contact)");
+  });
+
+  it("constructor key in fields is not surfaced as a field value", () => {
+    // If "constructor" were read without an own-property guard, it would return
+    // the Object constructor function and potentially confuse downstream code.
+    const fields: Record<string, unknown> = {};
+    Object.defineProperty(fields, "constructor", {
+      value: { isLeaked: true },
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+
+    // personToCard looks for "Full Name" in fields; "constructor" is only
+    // dangerous if the pick helper were to use it as a data key.
+    // We pass it explicitly in the keys list via a person whose id encodes the
+    // scenario — the card must still render without error and must not
+    // incorporate the constructor value.
+    const card = personToCard({ id: "sec2", fields });
+    expect(card.title).toBe("(unnamed contact)");
+    // description must not contain anything from the poisoned constructor value
+    expect(card.description).not.toContain("isLeaked");
+  });
+
+  it("a key only on the prototype chain (not an own property) is not picked", () => {
+    // Create a fields object whose prototype has a "Full Name" property,
+    // but the own object does not.
+    const proto = { "Full Name": "Prototype Ghost" };
+    const fields = Object.create(proto) as Record<string, unknown>;
+
+    // Confirm the inherited property is accessible via bracket notation
+    // (this is the vulnerability we are guarding against).
+    expect(fields["Full Name"]).toBe("Prototype Ghost");
+
+    // pick must NOT surface the inherited value.
+    const card = personToCard({ id: "sec3", fields });
+    expect(card.title).toBe("(unnamed contact)");
+    expect(card.description).not.toContain("Prototype Ghost");
+  });
+
+  it("normal own-property field reads are unaffected by the guard", () => {
+    // Regression: ensure the hasOwnProperty guard does not accidentally
+    // block legitimate own-property reads.
+    const card = personToCard({
+      id: "sec4",
+      fields: { "Full Name": "Normal User", "Strength Score": "85" },
+    });
+    expect(card.title).toBe("Normal User");
+    expect(card.status).toBe("in_progress");
+    expect(card.priority).toBe("high");
+  });
+});

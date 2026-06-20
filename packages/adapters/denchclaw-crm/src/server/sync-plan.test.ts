@@ -51,9 +51,9 @@ describe("cardChecksum", () => {
     expect(first).toBe(second);
   });
 
-  it("returns an 8-character hex string", () => {
+  it("returns a 16-character hex string", () => {
     const cs = cardChecksum(CARD_A);
-    expect(cs).toMatch(/^[0-9a-f]{8}$/);
+    expect(cs).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it("differs for cards with different content", () => {

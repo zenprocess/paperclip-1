@@ -7,8 +7,8 @@ import type { CrmCardInput } from "./card-schema.js";
  * Field excluded: `status` — the Paperclip lane is user-owned and must never be
  * overwritten by the sync layer.
  *
- * Algorithm: FNV-1a 32-bit over the canonical UTF-16 code units of the JSON string.
- * Returns an 8-character lowercase hex string.
+ * Algorithm: FNV-1a 64-bit over the canonical UTF-16 code units of the JSON string.
+ * Returns a 16-character lowercase hex string.
  */
 export function cardChecksum(card: CrmCardInput): string {
   const canonical = JSON.stringify({
@@ -19,14 +19,17 @@ export function cardChecksum(card: CrmCardInput): string {
     projectKey: card.projectKey,
   });
 
-  // FNV-1a 32-bit
-  let hash = 2166136261; // FNV offset basis
+  // FNV-1a 64-bit (BigInt)
+  const FNV_OFFSET = 14695981039346656037n;
+  const FNV_PRIME = 1099511628211n;
+  const MASK64 = 0xFFFFFFFFFFFFFFFFn;
+
+  let hash = FNV_OFFSET;
   for (let i = 0; i < canonical.length; i++) {
-    hash ^= canonical.charCodeAt(i);
-    // Multiply by FNV prime (16777619), keeping within 32-bit unsigned range via >>>0
-    hash = Math.imul(hash, 16777619) >>> 0;
+    hash ^= BigInt(canonical.charCodeAt(i));
+    hash = (hash * FNV_PRIME) & MASK64;
   }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+  return hash.toString(16).padStart(16, "0");
 }
 
 /** A card that already exists in Paperclip, keyed by billingCode. */

@@ -19,12 +19,33 @@ export interface CrmCardInput {
   projectKey: string;
 }
 
+/**
+ * Keys that must never be read from open-index-signature objects coming from
+ * external API data. Reading them can either (a) pollute Object.prototype via
+ * property assignment, or (b) surface non-data inherited members (e.g. the
+ * built-in `constructor` function) as if they were field values.
+ */
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * Safe own-property read: returns the value only when the object has the key
+ * as its own (non-inherited) property AND the key is not a dangerous prototype
+ * key. Returns undefined otherwise.
+ */
+function safeGet(obj: Record<string, unknown>, key: string): unknown {
+  if (DANGEROUS_KEYS.has(key)) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(obj, key)) return undefined;
+  return obj[key];
+}
+
 /** Read a value by trying several likely keys, on the record top-level and in `fields`. */
 function pick(record: Record<string, unknown>, keys: string[]): unknown {
   const fields = (record.fields as Record<string, unknown> | undefined) ?? {};
   for (const key of keys) {
-    if (record[key] != null && record[key] !== "") return record[key];
-    if (fields[key] != null && fields[key] !== "") return fields[key];
+    const rv = safeGet(record, key);
+    if (rv != null && rv !== "") return rv;
+    const fv = safeGet(fields, key);
+    if (fv != null && fv !== "") return fv;
   }
   return undefined;
 }
