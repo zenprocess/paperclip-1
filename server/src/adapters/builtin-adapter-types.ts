@@ -7,6 +7,7 @@ export const BUILTIN_ADAPTER_TYPES = new Set([
   "codex_local",
   "cursor_cloud",
   "cursor",
+  "denchclaw_crm",
   "gemini_local",
   "grok_local",
   "openclaw_gateway",
