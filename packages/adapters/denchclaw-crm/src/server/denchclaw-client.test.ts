@@ -46,6 +46,34 @@ function makeFetch(
   return { fetchImpl, calls };
 }
 
+/**
+ * Build a fake fetch whose response varies per call index.
+ * Each entry in `pages` is returned for the corresponding sequential call (0-indexed).
+ * If there are more calls than pages, the last page is repeated.
+ */
+function makePagedFetch(
+  pages: Array<{ people: Array<{ id: string }> }>,
+): { fetchImpl: typeof fetch; calls: FetchCall[] } {
+  const calls: FetchCall[] = [];
+  const fetchImpl = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const idx = calls.length;
+    calls.push({ url: String(input), init });
+    const page = pages[Math.min(idx, pages.length - 1)];
+    const headers = new Headers();
+    headers.set("content-type", "application/json");
+    return {
+      ok: true,
+      status: 200,
+      headers,
+      json: async () => page,
+    } as unknown as Response;
+  }) as typeof fetch;
+  return { fetchImpl, calls };
+}
+
 describe("DenchClawClient.listPeople", () => {
   it("parses { people: [...] } into the array", async () => {
     const { fetchImpl } = makeFetch({
@@ -212,10 +240,10 @@ describe("DenchClawClient base URL normalization", () => {
       fetchImpl,
     });
 
-    await client.listPeople(50);
+    await client.listPeople({ pageSize: 50 });
 
     const url = calls[0]?.url ?? "";
-    expect(url).toBe("https://crm.zp.digital/api/crm/people?limit=50");
+    expect(url).toBe("https://crm.zp.digital/api/crm/people?limit=50&offset=0");
     // No "//" except the one in the protocol.
     expect(url.replace("https://", "")).not.toContain("//");
   });
@@ -230,5 +258,66 @@ describe("DenchClawClient timeout / abort propagation", () => {
     const client = new DenchClawClient({ baseUrl: "https://crm.zp.digital", fetchImpl });
 
     await expect(client.listPeople()).rejects.toThrow(/abort/i);
+  });
+});
+
+describe("DenchClawClient.listPeople pagination", () => {
+  it("accumulates three full pages then stops on a short page, deduping by id", async () => {
+    // pageSize=2 → pages of 2,2,2,1 → 7 unique people
+    const page1 = { people: [{ id: "p1" }, { id: "p2" }] };
+    const page2 = { people: [{ id: "p3" }, { id: "p4" }] };
+    const page3 = { people: [{ id: "p5" }, { id: "p6" }] };
+    const page4 = { people: [{ id: "p7" }] }; // short page — signals end
+    const { fetchImpl, calls } = makePagedFetch([page1, page2, page3, page4]);
+    const client = new DenchClawClient({ baseUrl: "https://crm.zp.digital", fetchImpl });
+
+    const people = await client.listPeople({ pageSize: 2, maxPages: 50 });
+
+    expect(people.map((p) => p.id)).toEqual(["p1", "p2", "p3", "p4", "p5", "p6", "p7"]);
+    // Exactly 4 fetch calls: pages 0–3
+    expect(calls).toHaveLength(4);
+  });
+
+  it("terminates via the new-ids guard when the API ignores offset (returns the same page every call)", async () => {
+    // Every call returns the same two people — offset is ignored by the API.
+    const samePage = { people: [{ id: "x1" }, { id: "x2" }] };
+    // makePagedFetch repeats the last entry when calls exceed pages.length
+    const { fetchImpl, calls } = makePagedFetch([samePage]);
+    const client = new DenchClawClient({ baseUrl: "https://crm.zp.digital", fetchImpl });
+
+    const people = await client.listPeople({ pageSize: 2, maxPages: 50 });
+
+    // Should get only the 2 unique people from the first effective page
+    expect(people.map((p) => p.id)).toEqual(["x1", "x2"]);
+    // Must NOT loop 50 times — the new-ids guard stops after the second call
+    // (first call: 2 new ids; second call: 0 new ids → stop)
+    expect(calls).toHaveLength(2);
+    expect(calls.length).toBeLessThan(50);
+  });
+
+  it("respects maxPages cap when every page is full and all-new", async () => {
+    // Infinite stream of unique people, pageSize=2, maxPages=3
+    let counter = 0;
+    const fetchImpl = (async (
+      input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> => {
+      const headers = new Headers();
+      headers.set("content-type", "application/json");
+      const people = [{ id: `p${++counter}` }, { id: `p${++counter}` }];
+      return {
+        ok: true,
+        status: 200,
+        headers,
+        json: async () => ({ people }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    const client = new DenchClawClient({ baseUrl: "https://crm.zp.digital", fetchImpl });
+
+    const people = await client.listPeople({ pageSize: 2, maxPages: 3 });
+
+    // maxPages=3 → at most 3 fetches → at most 6 unique people
+    expect(people).toHaveLength(6);
   });
 });

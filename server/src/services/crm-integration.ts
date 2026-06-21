@@ -15,9 +15,12 @@ import {
   resolveTenantEndpoint,
   DenchClawClient,
   personToCard,
+  personCompanyRef,
+  companyToCard,
   computeSyncPlan,
   cardChecksum,
   CRM_PEOPLE_PROJECT_KEY,
+  CRM_COMPANIES_PROJECT_KEY,
   type CrmBridgePorts,
   type CrmConfig,
   type CrmCardInput,
@@ -116,6 +119,102 @@ async function syncTenantPeople(db: Db, cfg: CrmConfig, tenant: CrmTenant): Prom
 }
 
 // ---------------------------------------------------------------------------
+// Companies sync
+// ---------------------------------------------------------------------------
+
+async function syncTenantCompanies(db: Db, cfg: CrmConfig, tenant: CrmTenant): Promise<void> {
+  try {
+    const { baseUrl, serviceToken } = resolveTenantEndpoint(cfg, tenant);
+    const client = new DenchClawClient({ baseUrl, serviceToken });
+
+    // Derive distinct company refs from the people list.
+    const people = await client.listPeople();
+    const companyRefs = new Set<string>(
+      people.map(personCompanyRef).filter((ref): ref is string => ref !== undefined),
+    );
+
+    // Resolve each ref to a company record; skip nulls (404 → ref is a name not an id).
+    const resolvedCompanies = await Promise.all(
+      Array.from(companyRefs).map(async (ref) => {
+        const company = await client.getCompany(ref);
+        return company;
+      }),
+    );
+    const cards = resolvedCompanies
+      .filter((c): c is NonNullable<typeof c> => c !== null)
+      .map(companyToCard);
+
+    // Find-or-create the "crm-companies" project for this tenant.
+    const svc = projectService(db);
+    const existingProjects = await svc.list(tenant.companyId);
+    const crmProject =
+      existingProjects.find((p) => p.name === CRM_COMPANIES_PROJECT_KEY) ??
+      (await svc.create(tenant.companyId, { name: CRM_COMPANIES_PROJECT_KEY }));
+    const projectId = crmProject.id;
+
+    // Build an ExistingCard map keyed by billingCode.
+    const existingIssues = await issueService(db).list(tenant.companyId, { projectId });
+    const existingMap = new Map(
+      existingIssues
+        .filter((issue) => issue.billingCode != null)
+        .map((issue) => {
+          const syntheticCard: CrmCardInput = {
+            title: issue.title ?? "",
+            description: issue.description ?? "",
+            priority: issue.priority as IssuePriority,
+            billingCode: issue.billingCode as string,
+            projectKey: CRM_COMPANIES_PROJECT_KEY,
+            // status excluded from checksum — user owns the lane
+            status: issue.status as IssueStatus,
+          };
+          return [
+            issue.billingCode as string,
+            {
+              issueId: issue.id,
+              billingCode: issue.billingCode as string,
+              checksum: cardChecksum(syntheticCard),
+            },
+          ] as const;
+        }),
+    );
+
+    const plan = computeSyncPlan(cards, existingMap);
+
+    const isvc = issueService(db);
+
+    for (const action of plan.creates) {
+      await isvc.create(tenant.companyId, {
+        title: action.card.title,
+        description: action.card.description,
+        status: action.card.status,
+        priority: action.card.priority,
+        billingCode: action.card.billingCode,
+        projectId,
+      });
+    }
+
+    for (const action of plan.updates) {
+      await isvc.update(action.issueId, {
+        title: action.card.title,
+        description: action.card.description,
+        priority: action.card.priority,
+        // NEVER send status on update — user owns the lane
+      });
+    }
+
+    logger.info(
+      { component: "crm-integration", companyId: tenant.companyId },
+      `CRM companies sync: ${plan.creates.length} created, ${plan.updates.length} updated, ${plan.unchanged.length} unchanged`,
+    );
+  } catch (err: unknown) {
+    logger.error(
+      { component: "crm-integration", companyId: tenant.companyId, err },
+      "CRM companies sync failed for tenant; will retry on next interval",
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry-point
 // ---------------------------------------------------------------------------
 
@@ -205,6 +304,7 @@ export async function startCrmIntegration(deps: {
           "CRM people sync failed for tenant; will retry on next interval",
         );
       });
+      syncTenantCompanies(deps.db, cfg, tenant);
     };
     // Initial sync on startup, then periodic.
     runSync();

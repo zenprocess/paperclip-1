@@ -4,6 +4,7 @@ import {
   companyToCard,
   statusFromStrengthScore,
   priorityFromStrengthScore,
+  personCompanyRef,
   CRM_PEOPLE_PROJECT_KEY,
   CRM_COMPANIES_PROJECT_KEY,
 } from "./card-schema.js";
@@ -167,5 +168,83 @@ describe("prototype-pollution hardening", () => {
     expect(card.title).toBe("Normal User");
     expect(card.status).toBe("in_progress");
     expect(card.priority).toBe("high");
+  });
+});
+
+describe("personCompanyRef", () => {
+  it("reads companyId from a flattened field", () => {
+    const ref = personCompanyRef({ id: "p1", companyId: "c-42" });
+    expect(ref).toBe("c-42");
+  });
+
+  it("reads company_id (snake_case) from a flattened field", () => {
+    const ref = personCompanyRef({ id: "p2", company_id: "c-99" });
+    expect(ref).toBe("c-99");
+  });
+
+  it("reads 'Company ID' from the EAV fields map (human label)", () => {
+    const ref = personCompanyRef({ id: "p3", fields: { "Company ID": "c-7" } });
+    expect(ref).toBe("c-7");
+  });
+
+  it("reads 'Company' from the EAV fields map (human label)", () => {
+    const ref = personCompanyRef({ id: "p4", fields: { Company: "Acme Corp" } });
+    expect(ref).toBe("Acme Corp");
+  });
+
+  it("reads 'company' from a flattened field when higher-priority keys absent", () => {
+    const ref = personCompanyRef({ id: "p5", company: "Beta Ltd" });
+    expect(ref).toBe("Beta Ltd");
+  });
+
+  it("reads 'company_name' when all other keys are absent", () => {
+    const ref = personCompanyRef({ id: "p6", company_name: "Gamma Inc" });
+    expect(ref).toBe("Gamma Inc");
+  });
+
+  it("returns undefined when no company field is present", () => {
+    const ref = personCompanyRef({ id: "p7" });
+    expect(ref).toBeUndefined();
+  });
+
+  it("returns undefined when company field is an empty string", () => {
+    const ref = personCompanyRef({ id: "p8", companyId: "   " });
+    expect(ref).toBeUndefined();
+  });
+
+  it("ignores __proto__ key in fields (prototype-pollution guard consistent)", () => {
+    const fields: Record<string, unknown> = {};
+    Object.defineProperty(fields, "__proto__", {
+      value: "c-evil",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    const before = ({} as Record<string, unknown>).polluted;
+    const ref = personCompanyRef({ id: "sec-cr1", fields });
+    expect(ref).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBe(before);
+  });
+
+  it("ignores constructor key in fields (prototype-pollution guard consistent)", () => {
+    const fields: Record<string, unknown> = {};
+    Object.defineProperty(fields, "constructor", {
+      value: "c-leaked",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    const ref = personCompanyRef({ id: "sec-cr2", fields });
+    expect(ref).toBeUndefined();
+  });
+
+  it("prefers companyId over lower-priority keys when multiple are present", () => {
+    const ref = personCompanyRef({
+      id: "p9",
+      companyId: "preferred",
+      company: "fallback",
+      fields: { Company: "also-fallback" },
+    });
+    expect(ref).toBe("preferred");
   });
 });

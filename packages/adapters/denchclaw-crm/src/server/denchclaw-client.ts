@@ -82,12 +82,50 @@ export class DenchClawClient {
     }
   }
 
-  /** GET /api/crm/people — list contacts. */
-  async listPeople(limit = 200): Promise<DenchClawPerson[]> {
-    const data = await this.get<DenchClawPeopleListResponse>(
-      `/api/crm/people?limit=${encodeURIComponent(String(limit))}`,
-    );
-    return Array.isArray(data?.people) ? data.people : [];
+  /**
+   * GET /api/crm/people — list contacts with safe pagination.
+   *
+   * Paginates via `limit` + `offset` until one of the following stop conditions:
+   * - a page returns fewer rows than pageSize (last page)
+   * - a page yields zero new ids (guards against APIs that ignore `offset`)
+   * - maxPages is reached
+   *
+   * Results are deduplicated by `person.id`.
+   */
+  async listPeople(opts?: {
+    pageSize?: number;
+    maxPages?: number;
+  }): Promise<DenchClawPerson[]> {
+    const pageSize = opts?.pageSize ?? 200;
+    const maxPages = opts?.maxPages ?? 50;
+
+    const accumulated: DenchClawPerson[] = [];
+    const seenIds = new Set<string>();
+
+    for (let page = 0; page < maxPages; page++) {
+      const offset = page * pageSize;
+      const data = await this.get<DenchClawPeopleListResponse>(
+        `/api/crm/people?limit=${encodeURIComponent(String(pageSize))}&offset=${encodeURIComponent(String(offset))}`,
+      );
+      const people = Array.isArray(data?.people) ? data.people : [];
+
+      let newIdsThisPage = 0;
+      for (const person of people) {
+        if (!seenIds.has(person.id)) {
+          seenIds.add(person.id);
+          accumulated.push(person);
+          newIdsThisPage++;
+        }
+      }
+
+      // Stop when this page yielded zero new ids (e.g. API ignores offset)
+      if (newIdsThisPage === 0) break;
+
+      // Stop when page is smaller than pageSize (last page)
+      if (people.length < pageSize) break;
+    }
+
+    return accumulated;
   }
 
   /** GET /api/crm/companies/:id — returns null on 404. */

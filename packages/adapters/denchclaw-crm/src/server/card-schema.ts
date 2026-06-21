@@ -108,6 +108,31 @@ export function personToCard(person: DenchClawPerson): CrmCardInput {
   };
 }
 
+/**
+ * Returns the company identifier to use when fetching the company record via
+ * the by-id CRM API (e.g. GET /api/crm/companies/:id).
+ *
+ * ASSUMPTION: the exact field that carries the company reference is unknown —
+ * the DenchClaw workspace was empty at design time. We probe the most likely
+ * key spellings in order: "companyId" (flattened FK), "company_id" (snake_case
+ * FK), "Company ID" (EAV human label), "Company" (EAV human label), "company"
+ * (flattened accessor), "company_name" (display fallback). The first non-empty
+ * string value found is returned trimmed. Returns undefined when no company
+ * field is present; the caller (getCompany) handles unresolvable refs by
+ * returning null on 404.
+ */
+export function personCompanyRef(person: DenchClawPerson): string | undefined {
+  const value = pick(person, [
+    "companyId",
+    "company_id",
+    "Company ID",
+    "Company",
+    "company",
+    "company_name",
+  ]);
+  return asString(value);
+}
+
 export function companyToCard(company: DenchClawCompany): CrmCardInput {
   const score = asScore(pick(company, ["strengthScore", "Strength Score", "strength_score"]));
   const label = asString(

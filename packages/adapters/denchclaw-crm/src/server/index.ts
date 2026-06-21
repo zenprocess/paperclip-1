@@ -19,6 +19,7 @@ export type { CrmConfig, CrmTenant } from "./config.js";
 // card mappers + helpers
 export {
   personToCard,
+  personCompanyRef,
   companyToCard,
   statusFromStrengthScore,
   priorityFromStrengthScore,
