@@ -112,6 +112,14 @@ import {
   agentConfigurationDoc as openclawGatewayAgentConfigurationDoc,
   models as openclawGatewayModels,
 } from "@paperclipai/adapter-openclaw-gateway";
+import {
+  execute as denchclawCrmExecute,
+  testEnvironment as denchclawCrmTestEnvironment,
+} from "@paperclipai/adapter-denchclaw-crm/server";
+import {
+  agentConfigurationDoc as denchclawCrmAgentConfigurationDoc,
+  models as denchclawCrmModels,
+} from "@paperclipai/adapter-denchclaw-crm";
 import { listCodexModels, refreshCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
 import {
@@ -413,6 +421,17 @@ const openclawGatewayAdapter: ServerAdapterModule = {
   agentConfigurationDoc: openclawGatewayAgentConfigurationDoc,
 };
 
+const denchclawCrmAdapter: ServerAdapterModule = {
+  type: "denchclaw_crm",
+  execute: denchclawCrmExecute,
+  testEnvironment: denchclawCrmTestEnvironment,
+  models: denchclawCrmModels,
+  supportsLocalAgentJwt: false,
+  supportsInstructionsBundle: false,
+  requiresMaterializedRuntimeSkills: false,
+  agentConfigurationDoc: denchclawCrmAgentConfigurationDoc,
+};
+
 const openCodeLocalAdapter: ServerAdapterModule = {
   type: "opencode_local",
   execute: openCodeExecute,
@@ -542,6 +561,7 @@ function registerBuiltInAdapters() {
     geminiLocalAdapter,
     grokLocalAdapter,
     openclawGatewayAdapter,
+    denchclawCrmAdapter,
     hermesLocalAdapter,
     processAdapter,
     httpAdapter,
